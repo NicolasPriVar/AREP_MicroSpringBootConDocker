@@ -1,6 +1,7 @@
 package com.arep.framework;
 
 import java.io.*;
+import java.lang.reflect.Method;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -10,6 +11,8 @@ public class MiniSpark {
     private static final int PORT = 8080;
     private static Path staticFolder = Paths.get("www").toAbsolutePath().normalize();
     private static final Map<String, Route> getRoutes = new HashMap<>();
+
+    private static Object controllerInstance;
 
     public static void staticfiles(String folder) {
         staticFolder = Paths.get(folder).toAbsolutePath().normalize();
@@ -59,7 +62,7 @@ public class MiniSpark {
         if (contentLength > 0) in.read(bodyChars);
         String body = new String(bodyChars);
 
-        Request req = new Request(method, uri, body);
+        Request req = new Request(method, uri.getPath(), body);
         Response res = new Response();
 
         if ("GET".equals(method) && getRoutes.containsKey(uri.getPath())) {
@@ -104,5 +107,50 @@ public class MiniSpark {
         if (path.endsWith(".png")) return "image/png";
         if (path.endsWith(".gif")) return "image/gif";
         return "text/plain";
+    }
+
+    public static void loadComponents(String[] args) {
+        try {
+            Class<?> controllerClass = Class.forName(args[0]);
+
+            if (controllerClass.isAnnotationPresent(RestController.class)) {
+                controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
+
+                for (Method method : controllerClass.getDeclaredMethods()) {
+                    if (method.isAnnotationPresent(GetMapping.class)) {
+                        GetMapping getMapping = method.getAnnotation(GetMapping.class);
+                        String path = getMapping.value();
+
+                        Route service = (request, response) -> {
+                            try {
+                                Object result;
+
+                                if (method.getParameterCount() == 0) {
+                                    result = method.invoke(controllerInstance);
+                                } else {
+                                    result = method.invoke(controllerInstance, request.getQueryParams());
+                                }
+
+                                return result.toString();
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                                return "Internal Server Error";
+                            }
+                        };
+
+                        getRoutes.put(path, service);
+
+                        System.out.println("Ruta cargada: " + path + " -> " + method.getName());
+                    }
+                }
+            } else {
+                System.out.println("La clase no tiene la anotación @RestController");
+            }
+
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Clase no encontrada: " + args[0], e);
+        } catch (Exception e) {
+            throw new RuntimeException("Error cargando componentes", e);
+        }
     }
 }

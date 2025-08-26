@@ -1,1 +1,0 @@
-document.getElementById("msg").textContent = "Hola desde app.js";
