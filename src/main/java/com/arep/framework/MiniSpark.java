@@ -2,6 +2,7 @@ package com.arep.framework;
 
 import java.io.*;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -29,56 +30,73 @@ public class MiniSpark {
 
             while (true) {
                 Socket client = serverSocket.accept();
-                new Thread(()->{
-                    try { handle(client); } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }).start();
+                handle(client);
             }
         }
     }
 
-    private static void handle(Socket socket) throws Exception {
-        InputStream is = socket.getInputStream();
-        OutputStream os = socket.getOutputStream();
-        BufferedReader in = new BufferedReader(new InputStreamReader(is, StandardCharsets.US_ASCII));
+    private static void handle(Socket socket) throws IOException {
+        try {
+            InputStream is = socket.getInputStream();
+            OutputStream os = socket.getOutputStream();
+            BufferedReader in = new BufferedReader(new InputStreamReader(is, StandardCharsets.US_ASCII));
 
-        String requestLine = in.readLine();
-        if (requestLine == null ) return;
-        String[] parts = requestLine.split(" ");
-        if (parts.length < 2) return;
-        String method = parts[0];
-        URI uri = new URI(parts[1]);
+            // 1. Leer la primera línea (método y path)
+            String requestLine = in.readLine();
+            if (requestLine == null) return;
+            String[] parts = requestLine.split(" ");
+            if (parts.length < 2) return;
+            String method = parts[0];
+            URI uri = new URI(parts[1]);
 
-        String line;
-        int contentLength = 0;
-        while (!(line = in.readLine()).isEmpty()){
-            if (line.toLowerCase().startsWith("content-length:")) {
-                contentLength = Integer.parseInt(line.split(":")[1].trim());
+            // 2. Leer headers
+            String line;
+            int contentLength = 0;
+            while (!(line = in.readLine()).isEmpty()) {
+                if (line.toLowerCase().startsWith("content-length:")) {
+                    contentLength = Integer.parseInt(line.split(":")[1].trim());
+                }
             }
+
+            // 3. Leer body (si hay)
+            char[] bodyChars = new char[contentLength];
+            if (contentLength > 0) in.read(bodyChars);
+            String body = new String(bodyChars);
+
+            // 4. Parsear query params
+            Map<String, String> queryParams = new HashMap<>();
+            if (uri.getRawQuery() != null) {
+                for (String param : uri.getRawQuery().split("&")) {
+                    String[] keyVal = param.split("=");
+                    if (keyVal.length == 2) {
+                        queryParams.put(keyVal[0], keyVal[1]);
+                    }
+                }
+            }
+
+            // 5. Crear Request y Response
+            Request req = new Request(method, uri.getPath(), queryParams, body);
+            Response res = new Response();
+
+            // 6. Manejo de rutas
+            if ("GET".equals(method) && getRoutes.containsKey(uri.getPath())) {
+                String result = getRoutes.get(req.getPath()).handle(req, res);
+                byte[] data = result.getBytes(StandardCharsets.UTF_8);
+                String headers = "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: " + res.getType() + "\r\n" +
+                        "Content-Length: " + data.length + "\r\n\r\n";
+                os.write(headers.getBytes(StandardCharsets.UTF_8));
+                os.write(data);
+            } else {
+                serveStatic(uri.getPath(), os);
+            }
+
+            os.flush();
+            socket.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new IOException("Error al manejar la petición");
         }
-
-        char[] bodyChars = new char[contentLength];
-        if (contentLength > 0) in.read(bodyChars);
-        String body = new String(bodyChars);
-
-        Request req = new Request(method, uri.getPath(), body);
-        Response res = new Response();
-
-        if ("GET".equals(method) && getRoutes.containsKey(uri.getPath())) {
-            String result = getRoutes.get(req.getPath()).handle(req, res);
-            byte[] data = result.getBytes(StandardCharsets.UTF_8);
-            String headers = "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: " + res.getType() + "\r\n" +
-                    "Content-Length: " + data.length + "\r\n\r\n";
-            os.write(headers.getBytes(StandardCharsets.UTF_8));
-            os.write(data);
-        } else {
-            serveStatic(uri.getPath(), os);
-        }
-
-        os.flush();
-        socket.close();
     }
 
     private static void serveStatic(String path, OutputStream os) throws IOException {
@@ -106,6 +124,8 @@ public class MiniSpark {
         if (path.endsWith(".js")) return "application/javascript";
         if (path.endsWith(".png")) return "image/png";
         if (path.endsWith(".gif")) return "image/gif";
+        if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+        if (path.endsWith(".ico")) return "image/x-icon";
         return "text/plain";
     }
 
@@ -125,11 +145,16 @@ public class MiniSpark {
                             try {
                                 Object result;
 
-                                if (method.getParameterCount() == 0) {
-                                    result = method.invoke(controllerInstance);
-                                } else {
-                                    result = method.invoke(controllerInstance, request.getQueryParams());
+                                Object[] argsForMethod = new Object[method.getParameterCount()];
+                                int i = 0;
+                                for (Parameter p : method.getParameters()) {
+                                    if (p.isAnnotationPresent(RequestParam.class)) {
+                                        String key = p.getAnnotation(RequestParam.class).value();
+                                        argsForMethod[i] = request.getQueryParams().getOrDefault(key, "");
+                                    }
+                                    i++;
                                 }
+                                result = method.invoke(controllerInstance, argsForMethod);
 
                                 return result.toString();
                             } catch (Exception e) {
