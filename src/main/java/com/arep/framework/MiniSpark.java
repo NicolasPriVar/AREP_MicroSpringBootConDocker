@@ -130,6 +130,9 @@ public class MiniSpark {
     }
 
     public static void loadComponents(String[] args) {
+        if (args == null || args.length == 0) {
+            throw new IllegalArgumentException("Debe proporcionar el nombre de la clase controladora como argumento");
+        }
         try {
             Class<?> controllerClass = Class.forName(args[0]);
 

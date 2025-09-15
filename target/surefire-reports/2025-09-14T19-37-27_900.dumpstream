@@ -1,0 +1,5 @@
+# Created at 2025-09-14T19:37:28.043
+Boot Manifest-JAR contains absolute paths in classpath 'F:\Universidad\SEMESTRE 10\AREP\AREP_MicroSpringBootConDocker\target\test-classes'
+Hint: <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+'other' has different root
+
